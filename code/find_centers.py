@@ -26,6 +26,10 @@ if __name__ == '__main__':
 
     for idx, fname in enumerate(files):
         print(idx, '/', len(files))
-        centers[fname] = generate_nuclei_centers(imread.imread(fname)).tolist()
+        try:
+            centers[fname] = generate_nuclei_centers(imread.imread(fname)).tolist()
+        except:
+            print("Could not read: {}".format(fname))
+            centers[fname] = []
 
     json.dump(centers, open('{}_nuclei_centers.json'.format(sys.argv[1]), 'w'))
