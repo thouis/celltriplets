@@ -3,8 +3,64 @@ import os
 import glob
 import imread
 import random
+import sqlite3
 
-from metadata import load_metadata, moa_to_imagelist, image_to_moa, image_to_plate, plate_to_imagelist
+
+def generate_image_triplets(root, ignore_compounds=["DMSO", "UNKNOWN", "taxol"]):
+    conn = sqlite3.connect(os.path.join(root, 'BBBC021_v1.sqlite'))
+    c = conn.cursor()
+
+    # get all images, plate names, compounds, and concentrations
+    results = c.execute("SELECT Image_Metadata_Plate_DAPI, Image_FileName_DAPI,"
+                        "Image_Metadata_Compound, Image_Metadata_Concentration "
+                        "from image").fetchall()
+    plates, images, compounds, concentrations = zip(*results)
+    plate_to_images = {}
+    image_to_plate = {}
+    for p, i in zip(plates, images):
+        plate_to_images.setdefault(p, []).append(i)
+        image_to_plate[i] = p
+
+    image_to_compoundconc = {}
+    compoundconc_to_images = {}
+    for i, cp, cc in zip(images, compounds, concentrations):
+        image_to_compoundconc[i] = (cp, cc)
+        compoundconc_to_images.setdefault((cp, cc), []).append(i)
+
+    while True:
+        image_1 = random.choice(images)
+        comp_1, conc_1 = image_to_compoundconc[image_1]
+
+        # don't sample from ignored compounds
+        if comp_1 in ignore_compounds:
+            continue
+
+        # choose a random second image with same compound/conc on a different plate
+        while True:
+            image_2 = random.choice(compoundconc_to_images[(comp_1, conc_1)])
+            if image_to_plate[image_2] != image_to_plate[image_1]:
+                break
+
+        # choose a random third image on the same plate, but with a different
+        # compound.
+        while True:
+            image_3 = random.choice(plate_to_images[image_to_plate[image_1]])
+            comp_3, conc_3 = image_to_compoundconc[image_3]
+            if comp_3 != comp_1 and comp_3 not in ignore_compounds:
+                break
+
+        print("triplet: {} == {} != {}".format(image_1, image_2, image_3))
+        print("   CC: {} == {} != {}".format(image_to_compoundconc[image_1],
+                                             image_to_compoundconc[image_2],
+                                             image_to_compoundconc[image_3]))
+        print("   PL: {} == {} != {}".format(image_to_plate[image_1],
+                                             image_to_plate[image_2],
+                                             image_to_plate[image_3]))
+        print("")
+
+        yield ("{}/{}".format(image_to_plate[image_1], image_1),
+               "{}/{}".format(image_to_plate[image_2], image_2),
+               "{}/{}".format(image_to_plate[image_3], image_3))
 
 
 def random_cell(imfile, centers, size=60):
@@ -30,36 +86,26 @@ def generate_triplets(root):
     total_centers = sum(counts.values())
     print("{} centers loaded".format(total_centers))
 
-    while True:
-        imfile_1 = random.choice(list(centers.keys()))
-
-        moa = image_to_moa[imfile_1]
-
-        # choose image_2 with same moa, but different plate
-        while True:
-            imfile_2 = random.choice(moa_to_imagelist[moa])
-            if image_to_plate[imfile_1] != image_to_plate[imfile_2]:
-                break
-
-        # choose image_3 with different moa, but same plate
-        while True:
-            imfile_3 = random.choice(plate_to_imagelist[image_to_plate[imfile_1]])
-            if image_to_moa[imfile_1] == image_to_moa[imfile_3]:
-                break
-
+    # infinite generator, never exits
+    for im1, im2, im3 in generate_image_triplets(root):
         # make sure there are actually cells to choose from
-        if (not centers[imfile_1]) or (not centers[imfile_2]) or (not centers[imfile_3]):
+        if (not centers[im1]) or (not centers[im2]) or (not centers[im3]):
             continue
 
-        yield (random_cell(imfile_1, centers[imfile_1]),
-               random_cell(imfile_2, centers[imfile_2]),
-               random_cell(imfile_3, centers[imfile_3]))
+        yield (random_cell(im1, centers[im1]),
+               random_cell(im2, centers[im2]),
+               random_cell(im3, centers[im3]))
 
 
 if __name__ == '__main__':
     root = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..')
 
-    load_metadata(root)
+    import numpy as np
+    import matplotlib
+    matplotlib.use('WXAgg')
+    import pylab
+    pylab.gray()
 
-    for t in generate_triplets(root):
-        print(len(t))
+    for im1, im2, im3 in generate_triplets(root):
+        pylab.imshow(np.hstack((im1, im2, im3)))
+        pylab.show()
