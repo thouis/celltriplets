@@ -49,21 +49,21 @@ def generate_image_triplets(root, ignore_compounds=["DMSO", "UNKNOWN", "taxol"])
             if comp_3 != comp_1 and comp_3 not in ignore_compounds:
                 break
 
-        print("triplet: {} == {} != {}".format(image_1, image_2, image_3))
-        print("   CC: {} == {} != {}".format(image_to_compoundconc[image_1],
-                                             image_to_compoundconc[image_2],
-                                             image_to_compoundconc[image_3]))
-        print("   PL: {} == {} != {}".format(image_to_plate[image_1],
-                                             image_to_plate[image_2],
-                                             image_to_plate[image_3]))
-        print("")
+        # print("triplet: {} == {} != {}".format(image_1, image_2, image_3))
+        # print("   CC: {} == {} != {}".format(image_to_compoundconc[image_1],
+        #                                      image_to_compoundconc[image_2],
+        #                                      image_to_compoundconc[image_3]))
+        # print("   PL: {} == {} != {}".format(image_to_plate[image_1],
+        #                                      image_to_plate[image_2],
+        #                                      image_to_plate[image_3]))
+        # print("")
 
         yield ("{}/{}".format(image_to_plate[image_1], image_1),
                "{}/{}".format(image_to_plate[image_2], image_2),
                "{}/{}".format(image_to_plate[image_3], image_3))
 
 
-def random_cell(imfile, centers, size=60):
+def random_cell(root, imfile, centers, size=64):
     im = imread.imread(os.path.join(root, 'images', imfile))
     i, j = random.choice(centers)
     # make sure full subimage is extracted
@@ -92,9 +92,9 @@ def generate_triplets(root):
         if (not centers[im1]) or (not centers[im2]) or (not centers[im3]):
             continue
 
-        yield (random_cell(im1, centers[im1]),
-               random_cell(im2, centers[im2]),
-               random_cell(im3, centers[im3]))
+        yield (random_cell(root, im1, centers[im1]),
+               random_cell(root, im2, centers[im2]),
+               random_cell(root, im3, centers[im3]))
 
 
 if __name__ == '__main__':
