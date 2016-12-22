@@ -4,6 +4,9 @@ import glob
 import imread
 import random
 import sqlite3
+import h5py
+from collections import defaultdict
+import numpy as np
 
 
 def generate_image_triplets(root, ignore_compounds=["DMSO", "UNKNOWN", "taxol"]):
@@ -26,6 +29,11 @@ def generate_image_triplets(root, ignore_compounds=["DMSO", "UNKNOWN", "taxol"])
     for i, cp, cc in zip(images, compounds, concentrations):
         image_to_compoundconc[i] = (cp, cc)
         compoundconc_to_images.setdefault((cp, cc), []).append(i)
+
+    # get all other channels
+    results = c.execute("SELECT Image_FileName_DAPI, Image_FileName_Actin, Image_FileName_Tubulin "
+                        "from image").fetchall()
+    other_images = {d: (a, t) for d, a, t in results}
 
     while True:
         image_1 = random.choice(images)
@@ -58,18 +66,36 @@ def generate_image_triplets(root, ignore_compounds=["DMSO", "UNKNOWN", "taxol"])
         #                                      image_to_plate[image_3]))
         # print("")
 
-        yield ("{}/{}".format(image_to_plate[image_1], image_1),
-               "{}/{}".format(image_to_plate[image_2], image_2),
-               "{}/{}".format(image_to_plate[image_3], image_3))
+        yield ((image_to_plate[image_1], image_1) + other_images[image_1],
+               (image_to_plate[image_2], image_2) + other_images[image_2],
+               (image_to_plate[image_3], image_3) + other_images[image_3])
 
 
-def random_cell(root, imfile, centers, size=64):
-    im = imread.imread(os.path.join(root, 'images', imfile))
+def cache_image(root, plate, subim, chunksize, _imcache=[None]):
+    if _imcache[0] is None:
+        _imcache[0] = h5py.File(os.path.join(root, 'image_cache.h5'), 'a')
+    cache = _imcache[0]
+
+    grp = cache.require_group(plate)
+    if subim not in grp:
+        grp.create_dataset(subim,
+                           data=imread.imread(os.path.join(root, 'images', plate, subim)),
+                           chunks=(chunksize, chunksize))
+        cache.flush()
+    return grp[subim]
+
+
+def random_cell(root, iminfo, centers, size=64):
     i, j = random.choice(centers)
-    # make sure full subimage is extracted
-    i = min(max(0, i - size // 2), im.shape[0] - size - 1)
-    j = min(max(0, j - size // 2), im.shape[1] - size - 1)
-    return im[i:(i + size), j:(j + size)]
+    allims = []
+    plate = iminfo[0]
+    for subim in iminfo[1:]:
+        im = cache_image(root, plate, subim, size)
+        base_i = min(max(0, i - size // 2), im.shape[0] - size - 1)
+        base_j = min(max(0, j - size // 2), im.shape[1] - size - 1)
+        subim = im[base_i:(base_i + size), base_j:(base_j + size)]
+        allims.append(subim)
+    return np.stack(allims, axis=2)
 
 
 def generate_triplets(root):
@@ -77,7 +103,7 @@ def generate_triplets(root):
     print("Found {} files of cell centers".format(len(center_files)))
 
     # combine all centers into one dict
-    centers = {}
+    centers = defaultdict(list)
     for f in center_files:
         [centers.update(json.load(open(f, "r"))) for f in center_files]
 
@@ -87,25 +113,29 @@ def generate_triplets(root):
     print("{} centers loaded".format(total_centers))
 
     # infinite generator, never exits
-    for im1, im2, im3 in generate_image_triplets(root):
+    for im1info, im2info, im3info in generate_image_triplets(root):
+        im1 = os.path.join(*im1info[:2])
+        im2 = os.path.join(*im2info[:2])
+        im3 = os.path.join(*im3info[:2])
         # make sure there are actually cells to choose from
         if (not centers[im1]) or (not centers[im2]) or (not centers[im3]):
             continue
 
-        yield (random_cell(root, im1, centers[im1]),
-               random_cell(root, im2, centers[im2]),
-               random_cell(root, im3, centers[im3]))
+        yield (random_cell(root, im1info, centers[im1]),
+               random_cell(root, im2info, centers[im2]),
+               random_cell(root, im3info, centers[im3]))
 
 
 if __name__ == '__main__':
     root = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..')
 
-    import numpy as np
     import matplotlib
     matplotlib.use('WXAgg')
     import pylab
     pylab.gray()
 
     for im1, im2, im3 in generate_triplets(root):
-        pylab.imshow(np.hstack((im1, im2, im3)))
+        tmp = np.hstack((im1, im2, im3)).astype(np.float32)
+        tmp /= tmp.max(axis=(0, 1))
+        pylab.imshow(tmp)
         pylab.show()
